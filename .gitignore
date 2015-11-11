@@ -1,0 +1,13 @@
+#Ignore all
+.*.cmd
+./*
+#Ignore all with extensions
+./*.*
+
+#Except for
+!.gitignore
+!*.c
+!*.h
+![Mm]akefile
+
+devswitch.[ch]

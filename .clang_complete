@@ -1,0 +1,17 @@
+-std=c99
+-D__KERNEL__
+-DMODULE
+-D__LINUX_ARM_ARCH__=7
+-nostdinc
+-I/home/maciek/Coding/embb/zynq-2015.2/linux-xlnx/arch/arm/include
+-I/home/maciek/Coding/embb/zynq-2015.2/linux-xlnx/include
+-I/usr/arm-linux-gnueabihf/include
+-I/usr/lib/gcc-cross/arm-linux-gnueabihf/4.8/include
+-target armv7a-linux-gnu
+-mcpu=cortex-a9
+-mfloat-abi=soft
+-L/usr/lib/gcc-cross/arm-linux-gnueabihf/4.8
+#-integrated-as
+# -DKBUILD_STR(s)=#s
+# -DKBUILD_BASENAME=KBUILD_STR(main)
+# -DKBUILD_MODNAME=KBUILD_STR(main)
