@@ -16,7 +16,7 @@ else
 		$(wildcard $(SRCDIR)/*.mod.c) $(wildcard $(SRCDIR)/.*.cmd)
 endif
 
-.PHONY: clean, default, scp
+.PHONY: clean, default, send_ko, ultraclean
 
 default:
 	# change dir to KDIR first, remembering the current location M and run the
@@ -36,9 +36,11 @@ waiter: waiter.c
 clean:
 	@-rm -rf hello_hf
 	@-rm -rf waiter
-	@-rm -rf modules.order Module.symvers
 	@-rm -rf $(TO_CLEAN)
 	@echo '[+] cleaned!'
+
+ultraclean:
+	@-rm -rf modules.order Module.symvers
 
 send_ko:
 	sshpass -p 'root' scp -P 2222 -o "UserKnownHostsFile=/dev/null" \

@@ -1,8 +1,8 @@
 #Ignore all
 .*.cmd
-./*
+*
 #Ignore all with extensions
-./*.*
+*.*
 
 #Except for
 !.gitignore
@@ -12,3 +12,4 @@
 
 devswitch.[ch]
 pts_snoop
+*.mod.c
