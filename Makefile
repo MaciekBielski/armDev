@@ -37,10 +37,11 @@ clean:
 	@-rm -rf hello_hf
 	@-rm -rf waiter
 	@-rm -rf $(TO_CLEAN)
-	@echo '[+] cleaned!'
+	@echo '[+] clean!'
 
-ultraclean:
+ultraclean: clean
 	@-rm -rf modules.order Module.symvers
+	@echo '[+] ultraclean!'
 
 send_ko:
 	sshpass -p 'root' scp -P 2222 -o "UserKnownHostsFile=/dev/null" \
