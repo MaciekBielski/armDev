@@ -2,10 +2,17 @@
  * registered that copies the data to driver's internal buffer and read
  * function reds only from that buffer. It blocks only when this buffer is
  * empty.
+ * Tasklets:
+ * - has to be atomic, it runs in soft interrupt context
  * - can be disabled and reenabled,
  * - run at interrupt time at the same CPU that schedules them,
  * - cat /proc/footasklet (?)
  * - tasklet_schedule(&), tasklet_kill(&) 
+ * Workqueues:
+ * - does NOT have to be atomic,
+ * - run in the context of a special kernel process, on the same CPU on which
+ *   they were submitted,
+ * - execution can be delayed for some time by the kernel,
  * Kfifo:
  * - no spinlocking required in only one reader/writer
  */
