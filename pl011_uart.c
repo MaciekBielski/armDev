@@ -1,20 +1,30 @@
-/* This version involves tasklets to read characters. On each IRQ a tasklet is
- * registered that copies the data to driver's internal buffer and read
- * function reds only from that buffer. It blocks only when this buffer is
- * empty.
- * Tasklets:
- * - has to be atomic, it runs in soft interrupt context
- * - can be disabled and reenabled,
- * - run at interrupt time at the same CPU that schedules them,
- * - cat /proc/footasklet (?)
- * - tasklet_schedule(&), tasklet_kill(&) 
- * Workqueues:
+/* This version involves workqueues. Tasklets are meant to be quick, they
+ * execute for a short period of time and atomically.
+ * WORK QUEUE:
  * - does NOT have to be atomic,
- * - run in the context of a special kernel process, on the same CPU on which
+ * - don't confuse with wait_queue,
+ * - has dedicated one or more 'kernel threads' (one for each CPU),
  *   they were submitted,
  * - execution can be delayed for some time by the kernel,
- * Kfifo:
- * - no spinlocking required in only one reader/writer
+ * - driver can create it's own workqueue or use the shared one, then it should
+ *   do not sleep for long time,
+ * Usage:
+ *  create own workqueue:
+ *      create_workqueue(), create_singlethread_workqueue(),
+ *      destroy_workqueue()
+ *  link the workqueue_struct with work_struct: INIT_STRUCTURE- first setup,
+ *      PREPARE_WORK- on changes, if structure alredy submitted to the workqueue,
+ *  submit a task to the workqueue:
+ *      queue_work(), queue_delayed_work(),
+ *      cancel_delayed_work(), flush_workqueue(),
+ *
+ * WAIT QUEUE:
+ * wait_queue_head_t rqh, gets wait_queue_t rqe elements that are
+ * moved to sleep by prepare_to_wait() + schedule() + finish_wait(),
+ * re-scheduled by wake_up_interruptible(),
+ *
+ * WORK QUEUE (shared):
+ * schedule_work(), schedule_delayed_work(), flush_scheduled_work()
  */
 #include <linux/init.h>
 #include <linux/module.h>
@@ -41,6 +51,7 @@
 #include <linux/spinlock.h>         //irq_pending spinlock
 #include <asm-generic/current.h>    //current()
 #include <linux/kfifo.h>            //generic fifo implementation
+#include <linux/workqueue.h>        //work queue
 
 #define MINOR_FIRST 0           //first requested minor
 #define MINOR_NB 1              //nb of minors requested
@@ -58,7 +69,15 @@
 #define PL011_IMSC(base) PL011_OFFSET( (base), 0x38)
 #define PL011_ICR(base) PL011_OFFSET( (base), 0x44)
 
-typedef struct pl011_dev
+typedef struct pl011_dev pl011_dev;
+
+typedef struct pl011_work
+{
+    pl011_dev* opaque;
+    struct  work_struct wrk;
+} pl011_work;
+
+struct pl011_dev
 {
     unsigned char *w_buff;
     unsigned char *iomem;
@@ -71,8 +90,9 @@ typedef struct pl011_dev
     spinlock_t flag_lock;
     wait_queue_head_t rqh;      //read queue head
     struct kfifo r_fifo;
-    struct tasklet_struct r_tasklet;
-} pl011_dev;
+    struct pl011_work r_work;
+};
+
 
 static struct class *pl011_class = NULL;
 static struct pl011_dev *pl011_device = NULL;
@@ -81,15 +101,12 @@ static unsigned int pl011_major=0;
 static const int irq_nb = 0x14;         //first column in 'cat /proc/interrupts' output
 //size_t uart_id = 0xC0CADEAD;          //used for shared IRQ lines
 
-static void pl011_r_tasklet(unsigned long opaque)
+static void pl011_r_work_handler(struct work_struct *work)
 {
-    /* If tasklet is scheduled while it runs then it will run again after it
-     * completes. The device may send a new IRQ only after ioread, but it's
-     * corresponding tasklet will be scheduled so everything is OK.
-     * The same tasklet never runs in parallel with itself.
-     * Separate characters do not really need to be extracted.
-     */
-    pl011_dev *uart = (pl011_dev *)opaque;
+    /* tricky way of obtaining the outer class pointer*/
+    pl011_work *work_container = NULL;
+    work_container = container_of(work, struct pl011_work, wrk);
+    pl011_dev *uart = work_container->opaque;
     //do NOT read if there is no room in fifo
     if(kfifo_avail(&uart->r_fifo)>=4)
     {
@@ -115,7 +132,7 @@ static irq_handler_t data_handler(int nb, void *dev_id, struct pt_regs *regs)
      * it should be triggered again */
     pl011_dev *uart = (pl011_dev *) dev_id;
     iowrite8(0x10, PL011_ICR(uart->iomem));
-    tasklet_schedule(&uart->r_tasklet);
+    schedule_work(&uart->r_work.wrk);
     return IRQ_HANDLED;
 }
 
@@ -157,7 +174,6 @@ static int pl011_release(struct inode *inode, struct file *filep)
     return 0;
 }
 
-
 static ssize_t pl011_read(struct file *filep, char __user *data, size_t sz,
         loff_t *fpos)
 {
@@ -170,7 +186,7 @@ static ssize_t pl011_read(struct file *filep, char __user *data, size_t sz,
     while(kfifo_is_empty(&uart->r_fifo))
     {
         /* process is about to block */
-        DEFINE_WAIT(rqe);
+        DEFINE_WAIT(rqe);                   //defines struct wait_queue_t rqe
         up(&uart->sem);
         prepare_to_wait(&uart->rqh, &rqe, TASK_INTERRUPTIBLE);
           if(kfifo_is_empty(&uart->r_fifo))
@@ -235,7 +251,6 @@ static struct file_operations pl011_fops ={
     .read = pl011_read,
     .write = pl011_write,
 };
-
 static int pl011_construct_device(struct pl011_dev *uart, struct class *klass)
 {
     int err=0, err_flag=0;
@@ -263,7 +278,8 @@ static int pl011_construct_device(struct pl011_dev *uart, struct class *klass)
     uart->iomem = ioremap(uart->io_start, uart->io_size);
     if( (err=kfifo_alloc(&uart->r_fifo, RBUFF_SZ, GFP_KERNEL)) )
         goto fail_kfifo;
-    tasklet_init(&uart->r_tasklet, pl011_r_tasklet, uart);
+    INIT_WORK(&uart->r_work.wrk, pl011_r_work_handler);
+    uart->r_work.opaque = uart;
     //success
     return 0;
     //fail
@@ -304,7 +320,8 @@ fail_cdev_add:
 static int pl011_destroy_device( struct pl011_dev *uart, struct class *klass)
 {
     /* device internal logic cleanup */
-    tasklet_kill(&uart->r_tasklet);
+    if( work_pending(&uart->r_work.wrk) )
+        flush_scheduled_work();
     kfifo_free(&uart->r_fifo);
     iounmap(uart->iomem);
     release_mem_region(uart->io_start, uart->io_size);
