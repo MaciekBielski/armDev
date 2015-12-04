@@ -5,7 +5,7 @@
 
 ifneq ($(KERNELRELEASE),)
 	# call from kernel
-	obj-m:= hello.o pl011_uart.o
+	obj-m:= pl011_uart.o
 	# module-objs:= file1.o file2.o
 else
 	# form command-line

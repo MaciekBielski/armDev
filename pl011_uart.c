@@ -27,6 +27,7 @@
  * schedule_work(), schedule_delayed_work(), flush_scheduled_work()
  */
 #include <linux/init.h>
+#include <linux/types.h>            //dev_t
 #include <linux/module.h>
 #include <linux/utsname.h>
 #include <linux/moduleparam.h>
