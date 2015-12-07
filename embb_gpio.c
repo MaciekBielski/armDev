@@ -3,12 +3,12 @@
 #include <linux/interrupt.h>    //irq_handler_t
 #include <linux/fs.h>           //register_blkdev
 #include <linux/genhd.h>        //alloc_desc
-#include <linux/spinlock.h>     //spinlock
 #include <linux/spinlock_types.h>     //spinlock
-#include <linux/blkdev.h>       //request queue
+#include <linux/spinlock.h>     //spinlock
+#include <linux/blkdev.h>       //request queue blk_queue_hardsect_size
 #include <linux/vmalloc.h>      //vmalloc
 #include <linux/ioctl.h>        //ioctl command
-#include <linux/blkdev.h>       //blk_queue_hardsect_size
+//#include <asm-generic/uaccess.h>     //VERIFY_READ and VERIFY_WRITE
 #define MINOR_FIRST 0           //first requested minor
 #define MINOR_NB 1              //nb of minors requested
 
@@ -19,13 +19,34 @@
 
 #define KERNEL_SECTOR_SIZE	512
 #define EMBB_GPIO_ADD 0x40000000
-#define EMBB_GPIO_DEV_NAME "embbGpioDev"
-#define EMBB_GPIO_DISK_NAME "embbGpioDisk"
-//ioctl
-#define EMBB_GPIO_MAGIC 'E'
+#define EMBB_GPIO_DEV_NAME "embbGpioDev"    //visible in /proc/devices
+#define EMBB_GPIO_DISK_NAME "embbGpio"  //visible in /dev
+#define EMBB_GPIO_NSECTORS 64
+/* Commands are associated with numbers, which should be unique across the
+ * system.
+ * _IOC_TYPEBITS: magic number,
+ * _IOC_NRBITS: the sequential number,
+ * _direction: _IOC_NONE (no data transfer), _IOC_READ, _IOC_WRITE or both,
+ *   seen from the user's point of view (_IOC_READ writes to user space)
+ * _IOC_SIZEBITS: size of involved user data, may be ignored,
+ * 
+ * access_ok, is kernel-oriented, returns true for success! On error -EFAULT
+ * should be returned to the caller,
+ *
+ * Helper macros to setup command numbers:
+ * _IO(type, nr) - command without arguments,
+ * _IOR(type, nr, datatype) - reading the data from the driver,
+ * _IOW(type, nr, datatype) - writing the data to the driver, 
+ * _IOWR(type, nr, datatype) - bidirectional transfer,
+ *
+ * By convention values should be exchanged by pointer, negative values is used
+ * to indicate an error (sets up errno variable)
+ */
+#define EMBB_GPIO_MAGIC 'E'         // 8-bit magic number
 #define EMBB_GPIO_GET_FIFO_TH _IOR(EMBB_GPIO_MAGIC, 1, int)
 #define EMBB_GPIO_SET_FIFO_TH _IOW(EMBB_GPIO_MAGIC, 2, int)
-#define EMBB_GPIO_MAXNR 2
+#define EMBB_GPIO_TEST _IO(EMBB_GPIO_MAGIC,3)
+#define EMBB_GPIO_MAXNR 3
 
 typedef struct EmbbGpioDev EmbbGpioDev;
 
@@ -39,7 +60,7 @@ struct EmbbGpioDev
     struct gendisk *gd;
     struct request_queue *rq;
     u8 *data;
-    struct spinlock_t rqLock;
+    spinlock_t rqLock;
 };
 
 static const int irq_nb = 0x14;         //first column in 'cat /proc/interrupts' output
@@ -51,33 +72,30 @@ static void embbGpioReqHandler(struct request_queue *rq)
 
 static int embbGpioOpen(struct inode *inode, struct file *filp)
 {
-    printk(KERN_WARNING "device opened\n");
+    printk(KERN_WARNING "DEVICE OPENED\n");
     return 0;
 }
 
 static int embbGpioRelease(struct inode *inode, struct file *filp)
 {
-    printk(KERN_WARNING "device released\n");
+    printk(KERN_WARNING "DEVICE RELEASED\n");
     return 0;
 }
 
 /* A higher-level block subsystem intercepts also ioctl requests.
- * @arg is optional as unsigned long,
- * ioctl commands numbers should be unique across the system,
+ * @dataPtr is optional, points to user space
  */
 static int embbGpioIoctl(struct inode *inode, struct file *filp,
-        unsigned int cmd, unsigned long arg)
+        unsigned int cmd, unsigned long dataPtr)
 {
     int ret=0;
-    //security checks
+    //simple security checks
     if( (_IOC_TYPE(cmd) != EMBB_GPIO_MAGIC)||(_IOC_NR(cmd) > EMBB_GPIO_MAXNR) )
-        return -ENOTTY;
-    //commands are user-oriented whereas access_ok is kernel-oriented
-    //check user-space pointers
+        ret = -ENOTTY;
     if(_IOC_DIR(cmd) & _IOC_READ)
-        ret = !access_ok(verify_write, (void __user*)arg, _IOC_SIZE(cmd) );
+        ret = !access_ok(VERIFY_WRITE, (void __user*)dataPtr, _IOC_SIZE(cmd) );
     if(_IOC_DIR(cmd) & _IOC_WRITE)
-        ret = !access_ok(verify_read, (void __user*)arg, _IOC_SIZE(cmd) );
+        ret = !access_ok(VERIFY_READ, (void __user*)dataPtr, _IOC_SIZE(cmd) );
     if(ret)
     {
         ret = -EFAULT;
@@ -86,24 +104,27 @@ static int embbGpioIoctl(struct inode *inode, struct file *filp,
     //parse control command
     switch(cmd)
     {
-        case EMBB_GPIO_GET_FIFO_TH:
-            ret = 888;
-            if( copy_to_user(arg, &ret, sizeof(ret)) )
-            {
-                ret = -EFAULT;
-                goto out;
-            }
-            ret = 0;
+        case EMBB_GPIO_TEST:
+            printk(KERN_WARNING "IOCTL TEST\n");
             break;
-        case EMBB_GPIO_SET_FIFO_TH:
-            if( copy_from_user(&ret, arg, sizeof(ret)) )
-            {
-                ret = -EFAULT;
-                goto out;
-            }
-            printk(KERN_WARNING "fifo th set to: %d\n", ret);
-            ret = 0;
-            break;
+        //case EMBB_GPIO_GET_FIFO_TH:
+        //    ret = 888;
+        //    if( copy_to_user(arg, &ret, sizeof(ret)) )
+        //    {
+        //        ret = -EFAULT;
+        //        goto out;
+        //    }
+        //    ret = 0;
+        //    break;
+        //case EMBB_GPIO_SET_FIFO_TH:
+        //    if( copy_from_user(&ret, arg, sizeof(ret)) )
+        //    {
+        //        ret = -EFAULT;
+        //        goto out;
+        //    }
+        //    printk(KERN_WARNING "fifo th set to: %d\n", ret);
+        //    ret = 0;
+        //    break;
         default:
             ret = -ENOTTY;
             break;
@@ -123,30 +144,29 @@ static int __init embbGpioInit(void)
 {
     printk(KERN_WARNING "%s\n", __TIME__);
     int err=0, err_flag=0;
-    /* Allocate the wrapper structure */
+    /* Allocate the wrapper structure, pointer has to be global */
     devPtr = (EmbbGpioDev *) kzalloc( sizeof( struct EmbbGpioDev), GFP_KERNEL );
     if(!devPtr)
         goto fail_kzalloc;
+    /* Parameters setup */
+    devPtr->minorsNb=1;
+    devPtr->hardSect = 512;
+    devPtr->nSectors = EMBB_GPIO_NSECTORS;          // one packet is 4096 -> 64*512 is 8 packets
+    devPtr->size = devPtr->nSectors*devPtr->hardSect;       //for the kernel a disk is just a linear 512-bytes array
     /* Register the device and choose dynamically major number (0) */
     err = register_blkdev(0, EMBB_GPIO_DEV_NAME);
     if(err<0)
         goto fail_register;
     devPtr->major = err;
-    /* Parameters setup */
-    devPtr->minorsNb=1;
-    devPtr->hardSect = 512;
-    devPtr->nSectors = 64;          // one packet is 4096 -> 64*512 is 8 packets
-    devPtr->size = devPtr->nSectors*devPtr->hardSect;       //for the kernel a disk is just a linear 512-bytes array
     devPtr->data = vmalloc(devPtr->size);
     if( !devPtr->data )
         goto fail_vmalloc;
     /* Prepare a request queue for a block device, args: handler + spin lock */
     spin_lock_init(&devPtr->rqLock);
-    devPtr->rq = blk_init_queue( embbGpioReqHandler, devPtr->rqLock);
+    devPtr->rq = blk_init_queue( embbGpioReqHandler, &devPtr->rqLock);
     if ( !devPtr->rq )
         goto fail_init_queue;
-    /* Assumption sector size as in kernel */
-    devPtr->rq->queuedata = devPtr;             //TODO: what is this?
+    devPtr->rq->queuedata = devPtr;             //TODO: this is perhaps passed as an opaque
     /* Gendisk structure allocation and setup */
     devPtr->gd = alloc_disk(devPtr->minorsNb);
     if( !devPtr->gd )
@@ -155,15 +175,15 @@ static int __init embbGpioInit(void)
     devPtr->gd->first_minor = 1;
     devPtr->gd->fops = &embbGpioOps;
     devPtr->gd->queue = devPtr->rq;
-    snprintf(devPtr->gd->disk_name, 32, EMBB_GPIO_DISK_NAME);
+    /* this should be done for each partition separately */
+    snprintf(devPtr->gd->disk_name, 32, "%s%c",EMBB_GPIO_DISK_NAME, 'A');
     set_capacity(devPtr->gd, devPtr->nSectors*(devPtr->hardSect/KERNEL_SECTOR_SIZE));
     devPtr->gd->private_data = devPtr;
     /* Only when everything is set up */
     add_disk(devPtr->gd);
-    printk(KERN_WARNING "device initialised successfully");
+    printk(KERN_WARNING "INIT SUCCESS\n");
     return 0;
     /* Failures */
-    //de-alloc disk?
 fail_alloc_disk:    
     if(!err_flag++)
         printk( KERN_WARNING "alloc disk failed\n");

@@ -5,7 +5,7 @@
 
 ifneq ($(KERNELRELEASE),)
 	# call from kernel
-	obj-m:= pl011_uart.o
+	obj-m:= embb_gpio.o
 	# module-objs:= file1.o file2.o
 else
 	# form command-line
@@ -33,9 +33,12 @@ waiter: waiter.c
 	arm-linux-gnueabihf-gcc -march=armv7-a -mtune=cortex-a9 \
 	-mfloat-abi=softfp -std=gnu99 -o $@ $^
 
+devctl: devctl.c
+	arm-linux-gnueabihf-gcc -march=armv7-a -mtune=cortex-a9 \
+	-mfloat-abi=softfp -std=gnu99 -o $@ $^
+
 clean:
-	@-rm -rf hello_hf
-	@-rm -rf waiter
+	@-rm -rf hello_hf waiter devctl
 	@-rm -rf $(TO_CLEAN)
 	@echo '[+] clean!'
 
